@@ -26,6 +26,7 @@ import {
 import { useMainLoopModel } from '../hooks/useMainLoopModel.js'
 import { type ReadonlySettings, useSettings } from '../hooks/useSettings.js'
 import { Ansi, Box, Text } from '@anthropic/ink'
+import { BuiltinStatusLine } from './BuiltinStatusLine.js'
 import { getRawUtilization } from '../services/claudeAiLimits.js'
 import type { Message } from '../types/message.js'
 import type { StatusLineCommandInput } from '../types/statusLine.js'
@@ -60,7 +61,8 @@ export function statusLineShouldDisplay(settings: ReadonlySettings): boolean {
   // Assistant mode: statusline fields (model, permission mode, cwd) reflect the
   // REPL/daemon process, not what the agent child is actually running. Hide it.
   if (feature('KAIROS') && getKairosActive()) return false
-  return settings?.statusLine !== undefined
+  // Show if a custom statusLine command is configured, or if the builtin is enabled.
+  return settings?.statusLine !== undefined || process.env.CLAUDE_BUILTIN_STATUS_LINE === '1'
 }
 
 function buildStatusLineCommandInput(
@@ -389,11 +391,39 @@ function StatusLineInner({
 
   // Get padding from settings or default to 0
   const paddingX = settings?.statusLine?.padding ?? 0
+  const builtinEnabled = settings?.statusLine === undefined && process.env.CLAUDE_BUILTIN_STATUS_LINE === '1'
 
   // StatusLine must have stable height in fullscreen — the footer is
   // flexShrink:0 so a 0→1 row change when the command finishes steals
   // a row from ScrollBox and shifts content. Reserve the row while loading
   // (same trick as PromptInputFooterLeftSide).
+  if (builtinEnabled) {
+    const rawUtil = getRawUtilization()
+    const msgs = messagesRef.current
+    const currentUsage = getCurrentUsage(msgs)
+    const runtimeModel = getRuntimeMainLoopModel({ permissionMode, mainLoopModel, exceeds200kTokens: doesMostRecentAssistantMessageExceed200k(msgs) })
+    const contextWindowSize = getContextWindowForModel(runtimeModel, getSdkBetas())
+    const contextPercentages = calculateContextPercentages(currentUsage, contextWindowSize)
+    const usedTokens = currentUsage
+      ? currentUsage.input_tokens + currentUsage.cache_creation_input_tokens + currentUsage.cache_read_input_tokens
+      : 0
+    return (
+      <Box paddingX={paddingX}>
+        <BuiltinStatusLine
+          modelName={renderModelName(runtimeModel)}
+          contextUsedPct={Math.round(contextPercentages.used ?? 0)}
+          usedTokens={usedTokens}
+          contextWindowSize={contextWindowSize}
+          totalCostUsd={getTotalCost()}
+          rateLimits={{
+            ...(rawUtil.five_hour && { five_hour: rawUtil.five_hour }),
+            ...(rawUtil.seven_day && { seven_day: rawUtil.seven_day }),
+          }}
+        />
+      </Box>
+    )
+  }
+
   return (
     <Box paddingX={paddingX} gap={2}>
       {statusLineText ? (
