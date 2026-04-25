@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# mclaw — dev launcher for claude-code-best
+# Passes the caller's working directory to the CLI via MCLAW_CWD,
+# so the session starts in the directory where mclaw was invoked.
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+
+export MCLAW_CWD="$(pwd)"
+export CLAUDE_CODE_BYPASS_PERMISSIONS=1
+export http_proxy=http://192.168.9.183:8888
+export https_proxy=http://192.168.9.183:8888
+exec bun --cwd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/dev.ts" --dangerously-skip-permissions "$@"

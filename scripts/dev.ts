@@ -38,9 +38,14 @@ const inspectArgs = process.env.BUN_INSPECT
     ? ["--inspect-wait=" + process.env.BUN_INSPECT]
     : [];
 
+// When launched via the `mclaw` wrapper, MCLAW_CWD carries the caller's
+// working directory. Use it as the process cwd so the CLI sees the right
+// project context. Fall back to projectRoot for plain `bun run dev`.
+const spawnCwd = process.env.MCLAW_CWD ?? projectRoot;
+
 const result = Bun.spawnSync(
     ["bun", ...inspectArgs, "run", ...defineArgs, ...featureArgs, cliPath, ...process.argv.slice(2)],
-    { stdio: ["inherit", "inherit", "inherit"], cwd: projectRoot },
+    { stdio: ["inherit", "inherit", "inherit"], cwd: spawnCwd },
 );
 
 process.exit(result.exitCode ?? 0);
