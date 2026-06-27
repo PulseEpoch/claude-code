@@ -7,6 +7,7 @@ import { closeAllConnections } from './transport/ws-handler'
 import { closeAllAcpConnections } from './transport/acp-ws-handler'
 import { closeAllRelayConnections } from './transport/acp-relay-handler'
 import { startDisconnectMonitor } from './services/disconnect-monitor'
+import { storeListSessions } from './store'
 import { dirname, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -65,10 +66,24 @@ app.use(
   '/code/*',
   serveStatic({ root: webDir, rewriteRequestPath: stripCodePrefix }),
 )
-// /code, /code/, and /code/:sessionId — SPA fallback
-app.get('/code', serveStatic({ root: webDir, path: 'index.html' }))
-app.get('/code/', serveStatic({ root: webDir, path: 'index.html' }))
-app.get('/code/:sessionId', serveStatic({ root: webDir, path: 'index.html' }))
+// /code, /code/ — redirect to the latest active session, fallback to dashboard
+const serveIndexHtml = serveStatic({ root: webDir, path: 'index.html' })
+app.get('/code', async (c, next) => {
+  const sessions = storeListSessions()
+    .filter(s => s.status !== 'archived' && s.status !== 'deleted')
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+  if (sessions.length > 0) return c.redirect(`/code/${sessions[0].id}`)
+  return serveIndexHtml(c, next)
+})
+app.get('/code/', async (c, next) => {
+  const sessions = storeListSessions()
+    .filter(s => s.status !== 'archived' && s.status !== 'deleted')
+    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+  if (sessions.length > 0) return c.redirect(`/code/${sessions[0].id}`)
+  return serveIndexHtml(c, next)
+})
+// /code/:sessionId — SPA fallback
+app.get('/code/:sessionId', serveIndexHtml)
 
 // v1 Environment routes
 app.route('/v1/environments', v1Environments)

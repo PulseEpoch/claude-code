@@ -281,10 +281,13 @@ const extractSessionMemory = sequential(async function (
     return
   }
 
-  // Poor mode: skip to reduce token consumption
+  // Poor mode / batch mode: skip to reduce token consumption
   if (feature('POOR')) {
     const { isPoorModeActive } = await import('../../commands/poor/poorMode.js')
-    if (isPoorModeActive()) return
+    const { isBatchModeActive } = await import(
+      '../../commands/batch/batchMode.js'
+    )
+    if (isPoorModeActive() || isBatchModeActive()) return
   }
 
   // Check gate lazily when hook runs (cached, non-blocking)

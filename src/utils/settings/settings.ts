@@ -262,6 +262,10 @@ export function getSettingsRootPathForSource(source: SettingSource): string {
  * 3. Default: 'settings.json'
  */
 function getUserSettingsFilePath(): string {
+  const mclawMode = process.env.MCLAW_MODE
+  if (mclawMode) {
+    return `settings-${mclawMode}.json`
+  }
   if (
     getUseCoworkPlugins() ||
     isEnvTruthy(process.env.CLAUDE_CODE_USE_COWORK_PLUGINS)

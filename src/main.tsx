@@ -40,7 +40,7 @@ import {
   initializeGrowthBook,
   refreshGrowthBookAfterAuthChange,
 } from './services/analytics/growthbook.js';
-import { fetchBootstrapData } from './services/api/bootstrap.js';
+import { fetchBootstrapData, fetchOpenAIModelList } from './services/api/bootstrap.js';
 import {
   type DownloadResult,
   downloadSessionFiles,
@@ -2894,6 +2894,9 @@ async function run(): Promise<CommanderCommand> {
 
         // Fetch bootstrap data from the server and update all cache values.
         void fetchBootstrapData();
+
+        // For OpenAI-compatible providers, fetch the available model list.
+        void fetchOpenAIModelList();
 
         // TODO: Consolidate other prefetches into a single bootstrap request.
         void prefetchPassesEligibility();

@@ -2,6 +2,7 @@ import { feature } from 'bun:bundle'
 import { randomUUID } from 'crypto'
 import { hostname, tmpdir } from 'os'
 import { basename, join, resolve } from 'path'
+import { isSelfHostedBridge } from './bridgeConfig.js'
 import { getRemoteSessionUrl } from '../constants/product.js'
 import { shutdownDatadog } from '../services/analytics/datadog.js'
 import { shutdown1PEventLogging } from '../services/analytics/firstPartyEventLogger.js'
@@ -95,6 +96,8 @@ const SPAWN_SESSIONS_DEFAULT = 32
  * disk cache for next time.
  */
 async function isMultiSessionSpawnEnabled(): Promise<boolean> {
+  // Self-hosted bridge: bypass GrowthBook gate
+  if (isSelfHostedBridge()) return true
   return checkGate_CACHED_OR_BLOCKING('tengu_ccr_bridge_multi_session')
 }
 

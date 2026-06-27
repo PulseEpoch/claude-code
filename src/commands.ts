@@ -169,6 +169,7 @@ const goalCmd = feature('GOAL')
     ).default
   : null
 /* eslint-enable @typescript-eslint/no-require-imports */
+import batch from './commands/batch/index.js'
 import thinkback from './commands/thinkback/index.js'
 import thinkbackPlay from './commands/thinkback-play/index.js'
 import permissions from './commands/permissions/index.js'
@@ -382,6 +383,7 @@ const COMMANDS = memoize((): Command[] => [
   ...(voiceCommand ? [voiceCommand] : []),
   thinkback,
   thinkbackPlay,
+  batch,
   permissions,
   plan,
   privacySettings,

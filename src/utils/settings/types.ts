@@ -795,6 +795,12 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'When true, poor mode is active — extract_memories and prompt_suggestion are disabled to save tokens.',
         ),
+      batchMode: z
+        .boolean()
+        .optional()
+        .describe(
+          'When true, batch mode is active — multi-tool batching, denser output, fewer API calls.',
+        ),
       showClearContextOnPlanAccept: z
         .boolean()
         .optional()

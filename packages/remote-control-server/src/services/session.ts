@@ -140,30 +140,28 @@ export function resolveOwnedWebSessionId(
     return compatibleCodeSessionId
   }
 
-  // Auto-bind: if the session exists but has no owner, claim it for the requesting user
+  // Self-hosted: allow any UUID to access any existing session and co-bind
   const existingId = resolveExistingSessionId(sessionId)
   if (existingId) {
-    const owners = storeGetSessionOwners(existingId)
-    if (!owners || owners.size === 0) {
-      storeBindSession(existingId, uuid)
-      return existingId
-    }
+    storeBindSession(existingId, uuid)
+    return existingId
   }
 
   return null
 }
 
-export function listWebSessionsByOwnerUuid(uuid: string): SessionResponse[] {
-  return storeListSessionsByOwnerUuid(uuid)
+export function listWebSessionsByOwnerUuid(_uuid: string): SessionResponse[] {
+  // Self-hosted: return all active sessions, no ownership filtering
+  return storeListSessions()
     .filter(session => !isSessionClosedStatus(session.status))
     .map(toResponse)
     .map(toWebSessionResponse)
 }
 
 export function listWebSessionSummariesByOwnerUuid(
-  uuid: string,
+  _uuid: string,
 ): SessionSummaryResponse[] {
-  return storeListSessionsByOwnerUuid(uuid)
+  return storeListSessions()
     .filter(session => !isSessionClosedStatus(session.status))
     .map(toSummaryResponse)
     .map(toWebSessionSummaryResponse)

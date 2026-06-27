@@ -40,6 +40,12 @@ export function resolveOpenAIModel(anthropicModel: string): string {
 
   const cleanModel = anthropicModel.replace(/\[1m\]$/, '')
 
+  // When OPENAI_PASSTHROUGH_MODEL=1, skip all mappings and send the model name as-is.
+  // Use this when the endpoint natively accepts Anthropic model names.
+  if (process.env.OPENAI_PASSTHROUGH_MODEL === '1') {
+    return cleanModel
+  }
+
   const family = getModelFamily(cleanModel)
   if (family) {
     const openaiEnvVar = `OPENAI_DEFAULT_${family.toUpperCase()}_MODEL`

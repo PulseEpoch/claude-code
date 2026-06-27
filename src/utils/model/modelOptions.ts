@@ -438,6 +438,14 @@ function getModelOptionsBase(fastMode = false): ModelOption[] {
     return payg1POptions
   }
 
+  // OpenAI provider with fetched model list: show all fetched models directly.
+  if (getAPIProvider() === 'openai') {
+    const cached = getGlobalConfig().additionalModelOptionsCache
+    if (cached && cached.length > 0) {
+      return [getDefaultOptionForUser(fastMode), ...cached]
+    }
+  }
+
   // PAYG 3P: Default (Sonnet 4.5) + Sonnet (3P custom) or Sonnet 4.6/1M + Opus (3P custom) or Opus 4.7/Opus 4.6 Legacy/Opus 4.7 1M + Haiku
   const payg3pOptions = [getDefaultOptionForUser(fastMode)]
 

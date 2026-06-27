@@ -2427,10 +2427,12 @@ export function startRelevantMemoryPrefetch(
     return undefined
   }
 
-  // Poor mode: skip the side-query to save tokens
+  // Poor mode / batch mode: skip the side-query to save tokens
   const { isPoorModeActive } =
     require('../commands/poor/poorMode.js') as typeof import('../commands/poor/poorMode.js')
-  if (isPoorModeActive()) {
+  const { isBatchModeActive } =
+    require('../commands/batch/batchMode.js') as typeof import('../commands/batch/batchMode.js')
+  if (isPoorModeActive() || isBatchModeActive()) {
     return undefined
   }
 

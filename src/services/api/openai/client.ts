@@ -76,3 +76,22 @@ export function getOpenAIClient(options?: {
 export function clearOpenAIClientCache(): void {
   cachedClient = null
 }
+
+/**
+ * Fetch the list of models available at the configured OpenAI-compatible
+ * endpoint. Returns an empty array on any error so callers can treat failure
+ * as "no models fetched" without crashing.
+ */
+export async function listOpenAIModels(): Promise<string[]> {
+  try {
+    const client = getOpenAIClient()
+    const page = await client.models.list()
+    const ids: string[] = []
+    for await (const model of page) {
+      ids.push(model.id)
+    }
+    return ids
+  } catch {
+    return []
+  }
+}

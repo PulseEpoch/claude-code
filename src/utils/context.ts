@@ -71,6 +71,14 @@ export function getContextWindowForModel(
     }
   }
 
+  // mclaw per-mode context window override (set via mclaw.json contextWindow field)
+  if (process.env.MCLAW_CONTEXT_WINDOW) {
+    const mclaw = parseInt(process.env.MCLAW_CONTEXT_WINDOW, 10)
+    if (!isNaN(mclaw) && mclaw > 0) {
+      return mclaw
+    }
+  }
+
   // [1m] suffix — explicit client-side opt-in, respected over all detection
   if (has1mContext(model)) {
     return 1_000_000

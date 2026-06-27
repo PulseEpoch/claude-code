@@ -10,6 +10,7 @@ import {
 import { useAppState, useSetAppState } from '../../state/AppState.js';
 import type { LocalJSXCommandCall } from '../../types/command.js';
 import type { EffortLevel } from '../../utils/effort.js';
+import { updateSettingsForSource } from '../../utils/settings/settings.js';
 import { isBilledAsExtraUsage } from '../../utils/extraUsage.js';
 import {
   clearFastModeCooldown,
@@ -58,6 +59,7 @@ function ModelPickerWrapper({
       mainLoopModel: model,
       mainLoopModelForSession: null,
     }));
+    updateSettingsForSource('userSettings', { model: model ?? undefined });
 
     let message = `Set model to ${chalk.bold(renderModelLabel(model))}`;
     if (effort !== undefined) {
@@ -182,6 +184,7 @@ function SetModelAndClose({
         mainLoopModel: modelValue,
         mainLoopModelForSession: null,
       }));
+      updateSettingsForSource('userSettings', { model: modelValue ?? undefined });
       let message = `Set model to ${chalk.bold(renderModelLabel(modelValue))}`;
 
       let wasFastModeToggledOn;

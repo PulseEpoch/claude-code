@@ -8,6 +8,8 @@ import { getCurrentWorktreeSession } from '../utils/worktree.js'
 import { getSessionStartDate } from './common.js'
 import { getInitialSettings } from '../utils/settings/settings.js'
 import { isPoorModeActive } from '../commands/poor/poorMode.js'
+import { getBatchModeSection } from './batchPrompt.js'
+import { isBatchModeActive } from '../commands/batch/batchMode.js'
 import {
   AGENT_TOOL_NAME,
   VERIFICATION_AGENT_TYPE,
@@ -362,8 +364,9 @@ function getSessionSpecificGuidanceSection(
     feature('VERIFICATION_AGENT') &&
     // 3P default: false — verification agent is ant-only A/B
     getFeatureValue_CACHED_MAY_BE_STALE('tengu_hive_evidence', false) &&
-    // Poor mode: skip verification agent to save tokens
-    !isPoorModeActive()
+    // Poor mode / batch mode: skip verification agent to save tokens
+    !isPoorModeActive() &&
+    !isBatchModeActive()
       ? `The contract: when non-trivial implementation happens on your turn, independent adversarial verification must happen before you report completion \u2014 regardless of who did the implementing (you directly, a fork you spawned, or a subagent). You are the one reporting to the user; you own the gate. Non-trivial means: 3+ file edits, backend/API changes, or infrastructure changes. Spawn the ${AGENT_TOOL_NAME} tool with subagent_type="${VERIFICATION_AGENT_TYPE}". Your own checks, caveats, and a fork's self-checks do NOT substitute \u2014 only the verifier assigns a verdict; you cannot self-assign PARTIAL. Pass the original user request, all files changed (by anyone), the approach, and the plan file path if applicable. Flag concerns if you have them but do NOT share test results or claim things work. On FAIL: fix, resume the verifier with its findings plus your fix, repeat until PASS. On PASS: spot-check it \u2014 re-run 2-3 commands from its report, confirm every PASS has a Command run block with output that matches your re-run. If any PASS lacks a command block or diverges, resume the verifier with the specifics. On PARTIAL (from the verifier): report what passed and what could not be verified.`
       : null,
   ].filter(item => item !== null)
@@ -406,6 +409,8 @@ function getModePersonaSection(): string | null {
   if (!mode.systemPrompt) return null
   return mode.systemPrompt
 }
+
+// getBatchModeSection lives in batchPrompt.ts
 
 export async function getSystemPrompt(
   tools: Tools,
@@ -522,6 +527,7 @@ ${CYBER_RISK_INSTRUCTION}`,
     getActionsSection(),
     getUsingYourToolsSection(enabledTools),
     getOutputEfficiencySection(),
+    getBatchModeSection(),
     // === BOUNDARY MARKER - DO NOT MOVE OR REMOVE ===
     ...(shouldUseGlobalCacheScope() ? [SYSTEM_PROMPT_DYNAMIC_BOUNDARY] : []),
     // --- Dynamic content (registry-managed) ---

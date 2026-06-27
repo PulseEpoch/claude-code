@@ -15,6 +15,7 @@ import { logError } from '../../utils/log.js'
 import { getAPIProvider } from '../../utils/model/providers.js'
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
 import { getClaudeCodeUserAgent } from '../../utils/userAgent.js'
+import { listOpenAIModels } from './openai/client.js'
 
 const bootstrapResponseSchema = lazySchema(() =>
   z.object({
@@ -137,5 +138,64 @@ export async function fetchBootstrapData(): Promise<void> {
     }))
   } catch (error) {
     logError(error)
+  }
+}
+
+/**
+ * Fetch available models from the OpenAI-compatible endpoint and persist to
+ * the additionalModelOptionsCache so the /model picker can display them.
+ *
+ * Only runs when the active provider is 'openai' and OPENAI_API_KEY is set.
+ * Errors are silently swallowed — model listing is best-effort.
+ */
+export async function fetchOpenAIModelList(): Promise<void> {
+  if (isEssentialTrafficOnly()) {
+    logForDebugging('[Bootstrap/OpenAI] Skipped: Nonessential traffic disabled')
+    return
+  }
+
+  if (getAPIProvider() !== 'openai') {
+    return
+  }
+
+  if (!process.env.OPENAI_API_KEY && !process.env.OPENAI_BASE_URL) {
+    logForDebugging(
+      '[Bootstrap/OpenAI] Skipped: no OPENAI_API_KEY or OPENAI_BASE_URL configured',
+    )
+    return
+  }
+
+  try {
+    logForDebugging('[Bootstrap/OpenAI] Fetching model list')
+    const modelIds = await listOpenAIModels()
+
+    if (modelIds.length === 0) {
+      logForDebugging('[Bootstrap/OpenAI] No models returned')
+      return
+    }
+
+    logForDebugging(`[Bootstrap/OpenAI] Fetched ${modelIds.length} models`)
+
+    const additionalModelOptions = modelIds.map(id => ({
+      value: id,
+      label: id,
+      description: `OpenAI model: ${id}`,
+    }))
+
+    const config = getGlobalConfig()
+    if (isEqual(config.additionalModelOptionsCache, additionalModelOptions)) {
+      logForDebugging('[Bootstrap/OpenAI] Cache unchanged, skipping write')
+      return
+    }
+
+    saveGlobalConfig(current => ({
+      ...current,
+      additionalModelOptionsCache: additionalModelOptions,
+    }))
+    logForDebugging('[Bootstrap/OpenAI] Cache updated')
+  } catch (error) {
+    logForDebugging(
+      `[Bootstrap/OpenAI] Failed to fetch model list: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
 }

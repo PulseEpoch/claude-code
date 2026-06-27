@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+# mclaw — dev launcher for claude-code-best
+# Passes the caller's working directory to the CLI via MCLAW_CWD,
+# so the session starts in the directory where mclaw was invoked.
+#
+# Usage:
+#   mclaw [mode] [args...]
+#
+# Modes:
+#   Read from ~/.claude/mclaw.json keys
+#
+# Configuration:
+#   ~/.claude/mclaw.json format:
+#   {
+#     "lan": { "baseUrl": "...", "apiKey": "...", "proxy": "..." },
+#     "deepseek": { "baseUrl": "...", "apiKey": "...", "contextWindow": 1000000 },
+#     "web": { "extends": "deepseek", "bridgeUrl": "http://localhost:3000", "bridgeToken": "my-rcs-key" }
+#   }
+#
+#   Fields:
+#     baseUrl        — OpenAI-compatible API endpoint (required)
+#     apiKey         — API key (required)
+#     proxy          — HTTP proxy for requests
+#     contextWindow  — Override context window size
+#     extends        — Inherit all fields from another mode
+#     bridgeUrl      — Self-hosted RCS URL, enables multi-session spawn mode
+#     bridgeToken    — RCS authentication token
+#
+# Override via env vars before calling:
+#   MCLAW_BASE_URL, MCLAW_API_KEY, MCLAW_PROXY
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+CONFIG_FILE="$HOME/.claude/mclaw.json"
+
+# Build/use a tiny setsid helper to create new process groups (macOS lacks setsid)
+# This prevents OpenClaw/terminal session cleanup from killing background processes.
+SETSID_BIN="$SCRIPT_DIR/.mclaw-setsid"
+if [ ! -x "$SETSID_BIN" ]; then
+    cat > /tmp/__mclaw_setsid.c << 'SETSIDSRC'
+#include <unistd.h>
+#include <stdlib.h>
+int main(int argc, char *argv[]) {
+    if (argc < 2) return 1;
+    setsid();
+    execvp(argv[1], &argv[1]);
+    return 1;
+}
+SETSIDSRC
+    cc -x c /tmp/__mclaw_setsid.c -o "$SETSID_BIN" 2>/dev/null && rm -f /tmp/__mclaw_setsid.c
+fi
+
+# Start a process in its own session (immune to parent PGID cleanup)
+mclaw_detach() {
+    # Launch process in a detached session, backgrounded and disowned
+    # so the parent shell doesn't wait for it or clean it up.
+    if [ -x "$SETSID_BIN" ]; then
+        "$SETSID_BIN" "$@" >/dev/null 2>&1 &
+        disown
+    else
+        "$@" >/dev/null 2>&1 &
+        disown
+    fi
+}
+
+export MCLAW_CWD="$(pwd)"
+export CLAUDE_CODE_BYPASS_PERMISSIONS=1
+export CLAUDE_BUILTIN_STATUS_LINE=1
+
+# Determine mode: check first arg, fall back to MCLAW_MODE env var, default to lan
+MODE="${MCLAW_MODE:-deepseek}"
+if [[ -n "$1" && "$1" != -* ]]; then
+    MODE="$1"
+    shift
+fi
+
+# Also check remaining args for --help / -h
+for arg in "$@"; do
+    if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+        MODE="help"
+        break
+    fi
+done
+
+# Export MCLAW_MODE so settings.ts can use instance-specific settings files
+export MCLAW_MODE="$MODE"
+
+# --- Helpers for web subcommands ---
+# Resolve port from config or default
+_mclaw_web_port() {
+    local port=3000
+    if [[ -f "$CONFIG_FILE" ]]; then
+        local url=$(bun -e "const c=require('$CONFIG_FILE');console.log(c?.web?.bridgeUrl||'')" 2>/dev/null)
+        if [[ -n "$url" ]]; then
+            port=$(echo "$url" | sed -E 's|.*:([0-9]+).*|\1|')
+        fi
+    fi
+    echo "$port"
+}
+
+_mclaw_web_pids() {
+    local port=$(_mclaw_web_port)
+    lsof -ti :$port 2>/dev/null
+}
+
+_mclaw_web_stop() {
+    local port=$(_mclaw_web_port)
+    local pids=$(_mclaw_web_pids)
+    if [[ -z "$pids" ]]; then
+        echo "[mclaw] Nothing running on port $port"
+        return 0
+    fi
+    echo "[mclaw] Stopping mclaw web on port $port (PID: $(echo $pids | tr '\n' ' '))"
+    kill $pids 2>/dev/null
+    sleep 1
+    # Force kill survivors
+    local survivors=$(_mclaw_web_pids)
+    [[ -n "$survivors" ]] && kill -9 $survivors 2>/dev/null
+    echo "[mclaw] Stopped."
+}
+
+_mclaw_web_status() {
+    local port=$(_mclaw_web_port)
+    local pids=$(_mclaw_web_pids)
+    if [[ -n "$pids" ]]; then
+        echo "[mclaw] Running on port $port — PID: $(echo $pids | tr '\n' ' ')"
+    else
+        echo "[mclaw] Not running"
+    fi
+}
+
+# Handle web subcommands: mclaw web start|stop|restart|status
+if [[ "$MODE" == "web" && -n "${1:-}" ]]; then
+    case "$1" in
+        start|launch|up)
+            shift
+            # fall through to normal web mode below
+            ;;
+        stop|down)
+            _mclaw_web_stop
+            exit 0
+            ;;
+        restart|reload)
+            _mclaw_web_stop
+            sleep 1
+            echo "[mclaw] Restarting..."
+            shift
+            # MODE stays "web", shift removed the subcommand — falls through to normal start
+            ;;
+        status)
+            _mclaw_web_status
+            exit 0
+            ;;
+        *)
+            echo "[mclaw] Unknown web subcommand: $1"
+            echo "Usage: mclaw web [start|stop|restart|status]"
+            exit 1
+            ;;
+    esac
+fi
+
+# Also support top-level: mclaw help, mclaw stop, mclaw status
+if [[ "$MODE" == "help" || "$MODE" == "--help" || "$MODE" == "-h" ]]; then
+    echo "Usage: mclaw [mode|command] [args...]"
+    echo ""
+    echo "Modes (launch with configured provider):"
+    echo "  <name>          Start CLI with provider from ~/.claude/mclaw.json"
+    echo "  MCLAW_MODE=<name> mclaw     Same, via environment variable"
+    echo ""
+    echo "Provider management:"
+    echo "  list                          List all configured providers"
+    echo "  add <name> <url> <key>        Add/update a provider"
+    echo "  remove <name>                 Delete a provider"
+    echo ""
+    echo "Web server (multi-session spawn):"
+    echo "  web start                     Start web server (RCS)"
+    echo "  web stop                      Stop web server"
+    echo "  web restart                   Restart web server"
+    echo "  web status                    Check web server status"
+    echo "  stop                          Same as web stop"
+    echo "  status                        Same as web status"
+    echo ""
+    echo "Overrides:"
+    echo "  MCLAW_BASE_URL  MCLAW_API_KEY  MCLAW_PROXY"
+    exit 0
+fi
+
+if [[ "$MODE" == "stop" || "$MODE" == "down" ]]; then
+    _mclaw_web_stop
+    exit 0
+fi
+
+if [[ "$MODE" == "status" ]]; then
+    _mclaw_web_status
+    exit 0
+fi
+
+# --- Provider management: mclaw add|remove|list ---
+if [[ "$MODE" == "add" || "$MODE" == "remove" || "$MODE" == "list" ]]; then
+    case "$MODE" in
+        add)
+            if [[ $# -lt 3 ]]; then
+                echo "Usage: mclaw add <name> <baseUrl> <apiKey> [--proxy <url>] [--contextWindow <n>]"
+                exit 1
+            fi
+            ADD_NAME="$1"; shift; ADD_URL="$1"; shift; ADD_KEY="$1"; shift
+            ADD_PROXY=""; ADD_CTX=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --proxy) shift; ADD_PROXY="$1" ;;
+                    --contextWindow) shift; ADD_CTX="$1" ;;
+                esac
+                shift
+            done
+            if [[ ! -f "$CONFIG_FILE" ]]; then echo '{}' > "$CONFIG_FILE"; fi
+            bun -e "
+                const c = require('$CONFIG_FILE');
+                c['$ADD_NAME'] = { baseUrl: '$ADD_URL', apiKey: '$ADD_KEY' };
+                const p = '$ADD_PROXY';
+                const w = '$ADD_CTX';
+                if (p) c['$ADD_NAME'].proxy = p;
+                if (w) c['$ADD_NAME'].contextWindow = Number(w);
+                require('fs').writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2) + '\n');
+            "
+            echo "[mclaw] Added provider '$ADD_NAME'"
+            exit 0
+            ;;
+        remove)
+            if [[ $# -lt 1 ]]; then
+                echo "Usage: mclaw remove <name>"
+                exit 1
+            fi
+            RM_NAME="$1"
+            if [[ ! -f "$CONFIG_FILE" ]]; then echo "Error: Config file not found"; exit 1; fi
+            bun -e "
+                const c = require('$CONFIG_FILE');
+                delete c['$RM_NAME'];
+                require('fs').writeFileSync('$CONFIG_FILE', JSON.stringify(c, null, 2) + '\n');
+            "
+            echo "[mclaw] Removed provider '$RM_NAME'"
+            exit 0
+            ;;
+        list)
+            if [[ ! -f "$CONFIG_FILE" ]]; then echo "No providers configured."; exit 0; fi
+            echo "Configured providers:"
+            bun -e "
+                const c = require('$CONFIG_FILE');
+                for (const [k, v] of Object.entries(c)) {
+                    const url = v.baseUrl || (v.extends ? '(extends ' + v.extends + ')' : '-');
+                    const tag = v.bridgeUrl ? ' [web]' : '';
+                    console.log('  ' + k + ': ' + url + tag);
+                }
+            "
+            exit 0
+            ;;
+    esac
+fi
+
+# Check if config file exists
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Error: Config file not found: $CONFIG_FILE"
+    echo "Please create it with format:"
+    echo '{"lan": {"baseUrl": "...", "apiKey": "...", "proxy": "..."}}'
+    exit 1
+fi
+
+# Get all available modes from config
+ALL_MODES=$(bun -e "const c=require('$CONFIG_FILE');console.log(Object.keys(c).join(' '))" 2>/dev/null)
+
+# Check if requested mode exists
+MODE_EXISTS=$(bun -e "const c=require('$CONFIG_FILE');console.log(c['$MODE']?'1':'0')" 2>/dev/null)
+if [[ "$MODE_EXISTS" != "1" ]]; then
+    echo "Error: Mode '$MODE' not found in config"
+    echo "Available modes: $ALL_MODES"
+    exit 1
+fi
+
+# Read config for the selected mode (resolve "extends" inheritance)
+CONFIG_BASE_URL=$(bun -e "const c=require('$CONFIG_FILE'),m=c['$MODE'],b=m?.extends?c[m.extends]:{};console.log(m?.baseUrl||b?.baseUrl||'')" 2>/dev/null)
+CONFIG_API_KEY=$(bun -e "const c=require('$CONFIG_FILE'),m=c['$MODE'],b=m?.extends?c[m.extends]:{};console.log(m?.apiKey||b?.apiKey||'')" 2>/dev/null)
+CONFIG_PROXY=$(bun -e "const c=require('$CONFIG_FILE'),m=c['$MODE'],b=m?.extends?c[m.extends]:{};console.log(m?.proxy||b?.proxy||'')" 2>/dev/null)
+
+# Validate required fields
+if [[ -z "$CONFIG_BASE_URL" && -z "$MCLAW_BASE_URL" ]]; then
+    echo "Error: No baseUrl configured for mode '$MODE'"
+    echo "Set it in $CONFIG_FILE or pass MCLAW_BASE_URL env var"
+    exit 1
+fi
+if [[ -z "$CONFIG_API_KEY" && -z "$MCLAW_API_KEY" ]]; then
+    echo "Error: No apiKey configured for mode '$MODE'"
+    echo "Set it in $CONFIG_FILE or pass MCLAW_API_KEY env var"
+    exit 1
+fi
+
+# Set proxy if configured
+if [[ -n "$CONFIG_PROXY" ]]; then
+    export http_proxy="$CONFIG_PROXY"
+    export https_proxy="$CONFIG_PROXY"
+    export HTTP_PROXY="$CONFIG_PROXY"
+    export HTTPS_PROXY="$CONFIG_PROXY"
+fi
+
+# Read optional contextWindow from config (e.g. 1000000 for DeepSeek 1M)
+CONFIG_CONTEXT_WINDOW=$(bun -e "const c=require('$CONFIG_FILE'),m=c['$MODE'],b=m?.extends?c[m.extends]:{};console.log(m?.contextWindow||b?.contextWindow||'')" 2>/dev/null)
+if [[ -n "$CONFIG_CONTEXT_WINDOW" ]]; then
+    export MCLAW_CONTEXT_WINDOW="$CONFIG_CONTEXT_WINDOW"
+fi
+
+# Read optional bridge config (for self-hosted Remote Control)
+CONFIG_BRIDGE_URL=$(bun -e "const c=require('$CONFIG_FILE'),m=c['$MODE'],b=m?.extends?c[m.extends]:{};console.log(m?.bridgeUrl||b?.bridgeUrl||'')" 2>/dev/null)
+CONFIG_BRIDGE_TOKEN=$(bun -e "const c=require('$CONFIG_FILE'),m=c['$MODE'],b=m?.extends?c[m.extends]:{};console.log(m?.bridgeToken||b?.bridgeToken||'')" 2>/dev/null)
+if [[ -n "$CONFIG_BRIDGE_URL" ]]; then
+    export CLAUDE_BRIDGE_BASE_URL="$CONFIG_BRIDGE_URL"
+    export CLAUDE_BRIDGE_OAUTH_TOKEN="${CONFIG_BRIDGE_TOKEN:-}"
+    BRIDGE_MODE="spawn"
+
+    # Auto-start RCS if not already running
+    RCS_PORT=$(echo "$CONFIG_BRIDGE_URL" | sed -E 's|.*:([0-9]+).*|\1|')
+    RCS_PORT="${RCS_PORT:-3000}"
+    if ! curl -s --connect-timeout 1 "${CONFIG_BRIDGE_URL}/health" >/dev/null 2>&1; then
+        echo "[mclaw] Starting RCS on port ${RCS_PORT}..."
+        # Start RCS in its own session so parent cleanup can't kill it
+        mclaw_detach env RCS_API_KEYS="${CONFIG_BRIDGE_TOKEN}" RCS_PORT="${RCS_PORT}" \
+            bun run --cwd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/rcs.ts"
+        # Wait for RCS to be ready (max 5s)
+        for i in $(seq 1 50); do
+            if curl -s --connect-timeout 1 "${CONFIG_BRIDGE_URL}/health" >/dev/null 2>&1; then
+                echo "[mclaw] RCS ready — ${CONFIG_BRIDGE_URL}/code/"
+                break
+            fi
+            sleep 0.1
+        done
+    else
+        echo "[mclaw] RCS already running — ${CONFIG_BRIDGE_URL}/code/"
+    fi
+fi
+
+# Set API endpoint
+export CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1
+export CLAUDE_CODE_USE_OPENAI=1
+export OPENAI_BASE_URL="${MCLAW_BASE_URL:-$CONFIG_BASE_URL}"
+export OPENAI_API_KEY="${MCLAW_API_KEY:-$CONFIG_API_KEY}"
+export OPENAI_PASSTHROUGH_MODEL=1
+
+# Use caffeinate to keep the process running even when the screen is locked
+if [[ "${BRIDGE_MODE:-}" == "spawn" ]]; then
+    # Multi-session spawn mode: run as remote-control bridge
+    # Launch in its own session so it survives parent cleanup
+    mclaw_detach caffeinate -di bun --cwd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/dev.ts" \
+        remote-control --spawn=same-dir --permission-mode bypassPermissions "$@"
+elif [[ -n "${RCS_PID:-}" ]]; then
+    caffeinate -di bun --cwd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/dev.ts" --dangerously-skip-permissions "$@"
+else
+    exec caffeinate -di bun --cwd "$SCRIPT_DIR" "$SCRIPT_DIR/scripts/dev.ts" --dangerously-skip-permissions "$@"
+fi

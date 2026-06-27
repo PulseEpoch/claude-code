@@ -3557,8 +3557,30 @@ function isMaxTokensCapEnabled(): boolean {
   return getFeatureValue_CACHED_MAY_BE_STALE('tengu_otk_slot_v1', false)
 }
 
+/**
+ * Batch mode: pin max output tokens to the model's upper limit so the model
+ * produces more per turn (fewer API calls = lower cost).
+ */
+function batchDefaultMaxTokens(
+  maxOutputTokens: ReturnType<typeof getModelMaxOutputTokens>,
+): number {
+  const result = validateBoundedIntEnvVar(
+    'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
+    process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS,
+    maxOutputTokens.upperLimit,
+    maxOutputTokens.upperLimit,
+  )
+  return result.effective
+}
+
 export function getMaxOutputTokensForModel(model: string): number {
   const maxOutputTokens = getModelMaxOutputTokens(model)
+
+  // Batch mode: use upper limit as default so the model produces more per turn
+  // (fewer API calls = lower cost). User can still override via env var.
+  if (process.env.MCLAW_BATCH === '1') {
+    return batchDefaultMaxTokens(maxOutputTokens)
+  }
 
   // Slot-reservation cap: drop default to 8k for all models. BQ p99 output
   // = 4,911 tokens; 32k/64k defaults over-reserve 8-16× slot capacity.

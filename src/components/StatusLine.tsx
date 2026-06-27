@@ -513,6 +513,7 @@ function StatusLineInner({ messagesRef, lastAssistantMessageId, vimMode }: Props
 
   // Get padding from settings or default to 0
   const paddingX = settings?.statusLine?.padding ?? 0;
+  const builtinEnabled = settings?.statusLine === undefined && process.env.CLAUDE_BUILTIN_STATUS_LINE === '1';
 
   // ---- Top row data: feed BuiltinStatusLine (model + ctx + 5h + 7d + cost) ---
   const builtinRuntimeModel = getRuntimeMainLoopModel({
